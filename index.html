@@ -224,6 +224,51 @@
       return foundSets;
     };
 
+    // 桌面牌組自動排序邏輯
+    const sortTilesForBoard = (tiles) => {
+      const regulars = tiles.filter(t => !t.isJoker);
+      const jokers = tiles.filter(t => t.isJoker);
+
+      if (regulars.length <= 1) return [...regulars, ...jokers];
+
+      // 判斷是否為同數字群組 (只要前兩張數字一樣，就當作群組)
+      const isGroup = regulars[0].value === regulars[1].value;
+      if (isGroup) {
+        return [...regulars.sort((a, b) => a.colorIdx - b.colorIdx), ...jokers];
+      }
+
+      // 否則當作順子排序
+      regulars.sort((a, b) => a.value - b.value);
+      
+      let sorted = [];
+      let expectedVal = regulars[0].value;
+      let regIdx = 0;
+
+      while (regIdx < regulars.length) {
+        if (regulars[regIdx].value === expectedVal) {
+          sorted.push(regulars[regIdx]);
+          expectedVal++;
+          regIdx++;
+        } else if (regulars[regIdx].value < expectedVal) {
+          // 處理重複數字的防呆機制
+          sorted.push(regulars[regIdx]);
+          regIdx++;
+        } else {
+          // 遇到斷層，如果有百搭牌就塞進去
+          if (jokers.length > 0) {
+            sorted.push(jokers.pop());
+            expectedVal++;
+          } else {
+             // 沒百搭牌可以補，強行跳過斷層
+             expectedVal = regulars[regIdx].value;
+          }
+        }
+      }
+      
+      // 剩下的百搭牌放最後面
+      return [...sorted, ...jokers];
+    };
+
     // 單張牌的組件提取到外層，避免重新渲染問題
     const Tile = ({ tile, onClick, isStaged, invalid }) => (
       <div 
@@ -371,7 +416,8 @@
           return cleanT;
         });
 
-        setBoard([...board, cleanStaging]);
+        // 幫新的牌組自動排序
+        setBoard([...board, sortTilesForBoard(cleanStaging)]);
         setStaging([]);
       };
 
@@ -386,7 +432,8 @@
           return cleanT;
         });
 
-        newBoard[setIndex] = [...newBoard[setIndex], ...cleanStaging];
+        // 合併後自動排序
+        newBoard[setIndex] = sortTilesForBoard([...newBoard[setIndex], ...cleanStaging]);
         setBoard(newBoard);
         setStaging([]);
       };
@@ -521,7 +568,8 @@
                 let newBoard = [...board];
                 
                 setsToPlay.forEach(set => {
-                  newBoard.push(set);
+                  // 電腦出的牌也套用排序
+                  newBoard.push(sortTilesForBoard(set));
                   set.forEach(tile => {
                     newHand = newHand.filter(t => t.id !== tile.id);
                   });
