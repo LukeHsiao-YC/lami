@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>行動拉密</title>
+  
+  <!-- 載入 Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- 載入 React 相關核心套件 -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- 載入 Babel 讓瀏覽器可以讀懂 JSX 語法 -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-stone-200">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // 定義牌的顏色和數值
+    const COLORS = ['text-red-500', 'text-blue-500', 'text-gray-900', 'text-orange-500'];
+    const BORDER_COLORS = ['border-red-500', 'border-blue-500', 'border-gray-900', 'border-orange-500'];
+
+    // 產生一副新牌 (104張一般牌 + 2張百搭牌)
+    const generateDeck = () => {
+      let newDeck = [];
+      let idCounter = 1;
+      for (let set = 0; set < 2; set++) {
+        for (let cIdx = 0; cIdx < COLORS.length; cIdx++) {
+          for (let value = 1; value <= 13; value++) {
+            newDeck.push({
+              id: idCounter++,
+              colorIdx: cIdx,
+              colorClass: COLORS[cIdx],
+              borderClass: BORDER_COLORS[cIdx],
+              value: value,
+              isJoker: false
+            });
+          }
+        }
+      }
+      // 加入兩張百搭牌
+      newDeck.push({ id: idCounter++, value: '☻', colorIdx: -1, colorClass: 'text-purple-600', borderClass: 'border-purple-600', isJoker: true });
+      newDeck.push({ id: idCounter++, value: '☻', colorIdx: -1, colorClass: 'text-purple-600', borderClass: 'border-purple-600', isJoker: true });
+
+      // 洗牌 (Fisher-Yates)
+      for (let i = newDeck.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newDeck[i], newDeck[j]] = [newDeck[j], newDeck[i]];
+      }
+      return newDeck;
+    };
+
+    // 驗證牌組是否合法 (包含百搭牌邏輯)
+    const isValidSet = (tiles) => {
+      if (tiles.length < 3 || tiles.length > 13) return false;
+
+      const jokers = tiles.filter(t => t.isJoker);
+      const regulars = tiles.filter(t => !t.isJoker);
+
+      if (regulars.length <= 1) return true; // 全是百搭或只有1張數字+多張百搭，一定合法
+
+      // 檢查是否為「群組」(同數字，不同色，最多4張)
+      const isGroup = () => {
+        if (tiles.length > 4) return false;
+        const val = regulars[0].value;
+        const colors = new Set();
+        for (let t of regulars) {
+          if (t.value !== val) return false;
+          if (colors.has(t.colorIdx)) return false;
+          colors.add(t.colorIdx);
+        }
+        return true;
+      };
+
+      // 檢查是否為「順子」(同色，連續數字)
+      const isRun = () => {
+        const color = regulars[0].colorIdx;
+        for (let t of regulars) {
+          if (t.colorIdx !== color) return false;
+        }
+
+        // 測試所有可能的起點數字 (1 到 14-牌數)
+        const len = tiles.length;
+        for (let start = 1; start <= 14 - len; start++) {
+          let possible = true;
+          let availableRegulars = regulars.map(t => t.value);
+          let jokersLeft = jokers.length;
+
+          for (let i = 0; i < len; i++) {
+            let reqValue = start + i;
+            let idx = availableRegulars.indexOf(reqValue);
+            if (idx !== -1) {
+              availableRegulars.splice(idx, 1);
+            } else if (jokersLeft > 0) {
+              jokersLeft--;
+            } else {
+              possible = false;
+              break;
+            }
+          }
+          if (possible && availableRegulars.length === 0) return true;
+        }
+        return false;
+      };
+
+      return isGroup() || isRun();
+    };
+
+    // 計算合法牌組的總分 (破冰時使用)
+    const getSetValue = (tiles) => {
+      if (!isValidSet(tiles)) return 0;
+      
+      const regulars = tiles.filter(t => !t.isJoker);
+      if (regulars.length === 0) return 0; // 極端狀況
+
+      // 若為群組，分數即為 數字 * 總張數
+      const isGroup = regulars.every(t => t.value === regulars[0].value);
+      if (isGroup) {
+        return regulars[0].value * tiles.length;
+      }
+
+      // 若為順子，找出正確的序列並加總
+      const len = tiles.length;
+      const jokersCount = tiles.filter(t => t.isJoker).length;
+      
+      for (let start = 1; start <= 14 - len; start++) {
+        let possible = true;
+        let jLeft = jokersCount;
+        let regVals = regulars.map(t => t.value);
+        
+        for (let i = 0; i < len; i++) {
+          let req = start + i;
+          let idx = regVals.indexOf(req);
+          if (idx !== -1) {
+            regVals.splice(idx, 1);
+          } else if (jLeft > 0) {
+            jLeft--;
+          } else {
+            possible = false;
+            break;
+          }
+        }
+        if (possible) {
+          let sum = 0;
+          for (let i = 0; i < len; i++) sum += (start + i);
+          return sum;
+        }
+      }
+      return 0;
+    };
+
+    // 簡單的 AI 邏輯：從手牌尋找合法的群組或順子
+    const findValidSetsFromHand = (handTiles) => {
+      let foundSets = [];
+      let regulars = handTiles.filter(t => !t.isJoker); // 簡化邏輯，AI 暫時把百搭牌扣在手上不用
+
+      // 找群組 (同數字，不同色)
+      const valueMap = {};
+      regulars.forEach(t => {
+        if (!valueMap[t.value]) valueMap[t.value] = [];
+        valueMap[t.value].push(t);
+      });
+
+      for (let val in valueMap) {
+        let tilesOfVal = valueMap[val];
+        let uniqueColors = [];
+        let groupToPlay = [];
+        for (let t of tilesOfVal) {
+          if (!uniqueColors.includes(t.colorIdx)) {
+            uniqueColors.push(t.colorIdx);
+            groupToPlay.push(t);
+          }
+        }
+        if (groupToPlay.length >= 3) {
+          foundSets.push(groupToPlay);
+          // 從備選名單移除，避免重複使用
+          groupToPlay.forEach(gt => {
+            const idx = regulars.findIndex(rt => rt.id === gt.id);
+            if (idx > -1) regulars.splice(idx, 1);
+          });
+        }
+      }
+
+      // 找順子 (同色，連續數字)
+      const colorMap = {};
+      regulars.forEach(t => {
+        if (!colorMap[t.colorIdx]) colorMap[t.colorIdx] = [];
+        colorMap[t.colorIdx].push(t);
+      });
+
+      for (let cIdx in colorMap) {
+        let tilesOfColor = colorMap[cIdx].sort((a, b) => a.value - b.value);
+        let currentRun = [];
+        for (let i = 0; i < tilesOfColor.length; i++) {
+          if (currentRun.length === 0) {
+            currentRun.push(tilesOfColor[i]);
+          } else {
+            const lastVal = currentRun[currentRun.length - 1].value;
+            const currentVal = tilesOfColor[i].value;
+            if (currentVal === lastVal + 1) {
+              currentRun.push(tilesOfColor[i]);
+            } else if (currentVal > lastVal + 1) {
+              if (currentRun.length >= 3) {
+                foundSets.push([...currentRun]);
+                currentRun.forEach(gt => {
+                  const idx = regulars.findIndex(rt => rt.id === gt.id);
+                  if (idx > -1) regulars.splice(idx, 1);
+                });
+              }
+              currentRun = [tilesOfColor[i]];
+            }
+          }
+        }
+        if (currentRun.length >= 3) {
+          foundSets.push([...currentRun]);
+        }
+      }
+
+      return foundSets;
+    };
+
+    // 單張牌的組件提取到外層，避免重新渲染問題
+    const Tile = ({ tile, onClick, isStaged, invalid }) => (
+      <div 
+        onClick={onClick}
+        className={`
+          relative flex items-center justify-center 
+          w-9 h-12 sm:w-11 sm:h-16 bg-white 
+          rounded shadow-md border-2 cursor-pointer font-bold
+          transform transition-transform active:scale-95
+          ${tile.borderClass}
+          ${isStaged ? 'opacity-80 scale-95 ring-2 ring-blue-300' : ''}
+          ${invalid ? 'bg-red-50 border-red-500 ring-2 ring-red-500' : ''}
+        `}
+      >
+        <span className={`text-xl sm:text-2xl ${tile.colorClass}`}>
+          {tile.value}
+        </span>
+      </div>
+    );
+
+    function App() {
+      const [gameState, setGameState] = useState('setup');
+      const [numBots, setNumBots] = useState(1);
+      const [deck, setDeck] = useState([]);
+      const [players, setPlayers] = useState([]);
+      const [board, setBoard] = useState([]);
+      const [turn, setTurn] = useState(0);
+      const [message, setMessage] = useState('');
+
+      // 回合暫存狀態 (用於重設回合)
+      const [backupBoard, setBackupBoard] = useState([]);
+      const [backupHand, setBackupHand] = useState([]);
+      
+      // 玩家操作區
+      const [staging, setStaging] = useState([]); // 暫存區的牌
+
+      // 初始化遊戲
+      const startGame = (botsCount) => {
+        const initialDeck = generateDeck();
+        const initialPlayers = [];
+        
+        // 強制塞一張百搭牌給人類玩家
+        const jokerIndex = initialDeck.findIndex(t => t.isJoker);
+        let humanHand = [];
+        if (jokerIndex !== -1) {
+          const jokerTile = initialDeck.splice(jokerIndex, 1)[0];
+          humanHand = [jokerTile, ...initialDeck.splice(0, 13)];
+        } else {
+          humanHand = initialDeck.splice(0, 14);
+        }
+        
+        initialPlayers.push({ id: 0, name: '你', hand: humanHand, isBot: false, hasIceBroken: false });
+        for (let i = 1; i <= botsCount; i++) {
+          initialPlayers.push({ id: i, name: `電腦 ${i}`, hand: initialDeck.splice(0, 14), isBot: true, hasIceBroken: false });
+        }
+
+        setDeck(initialDeck);
+        setPlayers(initialPlayers);
+        setBoard([]);
+        setTurn(0);
+        setStaging([]);
+        setBackupBoard([]);
+        setBackupHand(initialPlayers[0].hand);
+        setMessage('遊戲開始！請湊出總和至少30分的牌來「破冰」。');
+        setGameState('playing');
+      };
+
+      // 進入下一個玩家回合
+      const passTurn = (nextTurnIdx, newPlayers, currentBoard = board) => {
+        setTurn(nextTurnIdx);
+        setStaging([]);
+        setBackupBoard(JSON.parse(JSON.stringify(currentBoard))); 
+        setBackupHand(JSON.parse(JSON.stringify(newPlayers[nextTurnIdx].hand)));
+        
+        if (newPlayers[nextTurnIdx].isBot) {
+          setMessage(`輪到 ${newPlayers[nextTurnIdx].name} 了...`);
+        } else {
+          setMessage(newPlayers[nextTurnIdx].hasIceBroken ? '你的回合。請出牌或抽牌。' : '你的回合。需湊滿30分才能破冰。');
+        }
+      };
+
+      // 將手牌點擊放入暫存區
+      const handleHandClick = (tile) => {
+        if (players[turn]?.isBot) return;
+        
+        const currentPlayer = players[turn];
+        const newHand = currentPlayer.hand.filter(t => t.id !== tile.id);
+        const newPlayers = [...players];
+        newPlayers[turn] = { ...currentPlayer, hand: newHand };
+        
+        setPlayers(newPlayers);
+        setStaging([...staging, { ...tile, source: 'hand' }]);
+      };
+
+      // 將桌面牌點擊放入暫存區 (拆解)
+      const handleBoardClick = (setIndex, tile) => {
+        if (players[turn]?.isBot) return;
+        if (!players[turn]?.hasIceBroken) {
+          showMessage('必須先完成破冰 (出牌總分30以上) 才能拆解桌面的牌！');
+          return;
+        }
+
+        const newBoard = [...board];
+        const targetSet = newBoard[setIndex];
+        const tileIndex = targetSet.findIndex(t => t.id === tile.id);
+        
+        targetSet.splice(tileIndex, 1);
+        
+        if (targetSet.length === 0) {
+          newBoard.splice(setIndex, 1);
+        }
+        
+        setBoard(newBoard);
+        setStaging([...staging, { ...tile, source: 'board' }]);
+      };
+
+      // 點擊暫存區的牌 (如果是手牌來的，退回手牌)
+      const handleStagingClick = (tile) => {
+        if (tile.source === 'hand') {
+          const newStaging = staging.filter(t => t.id !== tile.id);
+          const currentPlayer = players[turn];
+          const newPlayers = [...players];
+          
+          const cleanTile = { ...tile };
+          delete cleanTile.source;
+          
+          newPlayers[turn] = { ...currentPlayer, hand: [...currentPlayer.hand, cleanTile] };
+          setPlayers(newPlayers);
+          setStaging(newStaging);
+        } else {
+          showMessage('這張牌來自桌面，你必須把它拼回桌面上，或點擊「重設回合」。');
+        }
+      };
+
+      // 將暫存區組成新牌組打到桌上
+      const formNewSet = () => {
+        if (staging.length < 3) {
+          showMessage('至少需要3張牌才能組成新牌組。');
+          return;
+        }
+        
+        const cleanStaging = staging.map(t => {
+          const cleanT = { ...t };
+          delete cleanT.source;
+          return cleanT;
+        });
+
+        setBoard([...board, cleanStaging]);
+        setStaging([]);
+      };
+
+      // 將暫存區的牌加入已存在的桌面牌組
+      const addToSet = (setIndex) => {
+        if (staging.length === 0) return;
+
+        const newBoard = [...board];
+        const cleanStaging = staging.map(t => {
+          const cleanT = { ...t };
+          delete cleanT.source;
+          return cleanT;
+        });
+
+        newBoard[setIndex] = [...newBoard[setIndex], ...cleanStaging];
+        setBoard(newBoard);
+        setStaging([]);
+      };
+
+      // 抽牌並結束回合 (或作為懲罰)
+      const drawTileAndPass = (reason = 'draw') => {
+        if (deck.length === 0) {
+          showMessage('牌堆已經沒牌了！');
+          passTurn((turn + 1) % players.length, players);
+          return;
+        }
+
+        const newPlayers = [...players];
+        newPlayers[turn].hand = [...backupHand];
+        
+        const newDeck = [...deck];
+        const drawnTile = newDeck.pop();
+        newPlayers[turn].hand.push(drawnTile);
+
+        setDeck(newDeck);
+        setBoard(JSON.parse(JSON.stringify(backupBoard)));
+        setPlayers(newPlayers);
+        
+        if (reason === 'penalty') {
+          showMessage('桌面牌組不合法，已重設並罰抽一張牌。');
+        }
+
+        passTurn((turn + 1) % players.length, newPlayers, backupBoard);
+      };
+
+      // 玩家確認結束回合
+      const endTurn = () => {
+        if (staging.length > 0) {
+          showMessage('暫存區還有牌！請將它們放到桌上，或退回手牌。');
+          return;
+        }
+
+        const invalidSets = board.filter(set => !isValidSet(set));
+        if (invalidSets.length > 0) {
+          showMessage('桌面上包含不合法的牌組 (必須為同數字不同色，或同色連續數字，且大於3張)。');
+          return;
+        }
+
+        const currentPlayer = players[turn];
+        let isHandChanged = currentPlayer.hand.length !== backupHand.length;
+
+        if (!currentPlayer.hasIceBroken) {
+          const currentBoardValue = board.reduce((sum, set) => sum + getSetValue(set), 0);
+          const backupBoardValue = backupBoard.reduce((sum, set) => sum + getSetValue(set), 0);
+          const scoreAdded = currentBoardValue - backupBoardValue;
+
+          if (scoreAdded > 0 && scoreAdded < 30) {
+            showMessage(`破冰失敗！你出的牌總合為 ${scoreAdded} 分，需要 30 分以上。已重設並罰抽牌。`);
+            setTimeout(() => drawTileAndPass('penalty'), 2000);
+            return;
+          } else if (scoreAdded >= 30) {
+            const newPlayers = [...players];
+            newPlayers[turn].hasIceBroken = true;
+            setPlayers(newPlayers);
+            isHandChanged = true;
+          }
+        }
+
+        if (!isHandChanged && JSON.stringify(board) === JSON.stringify(backupBoard)) {
+          drawTileAndPass('draw');
+          return;
+        }
+
+        if (currentPlayer.hand.length === 0) {
+          setMessage(`🎉 ${currentPlayer.name} 贏得了遊戲！ 🎉`);
+          setGameState('gameover');
+          return;
+        }
+
+        passTurn((turn + 1) % players.length, players, board);
+      };
+
+      // 重設回合
+      const resetTurn = () => {
+        const newPlayers = [...players];
+        newPlayers[turn].hand = [...backupHand];
+        setPlayers(newPlayers);
+        setBoard(JSON.parse(JSON.stringify(backupBoard)));
+        setStaging([]);
+        setMessage('已重設為回合開始的狀態。');
+      };
+
+      // 整理手牌
+      const sortHand = (type) => {
+        const currentPlayer = players[0];
+        let sortedHand = [...currentPlayer.hand];
+        
+        if (type === 'number') {
+          sortedHand.sort((a, b) => a.value - b.value || a.colorIdx - b.colorIdx);
+        } else if (type === 'color') {
+          sortedHand.sort((a, b) => a.colorIdx - b.colorIdx || (a.value === '☻' ? 99 : a.value) - (b.value === '☻' ? 99 : b.value));
+        }
+        
+        const newPlayers = [...players];
+        newPlayers[0] = { ...currentPlayer, hand: sortedHand };
+        setPlayers(newPlayers);
+      };
+
+      const showMessage = (msg) => {
+        setMessage(msg);
+      };
+
+      // 電腦對手 AI
+      useEffect(() => {
+        if (gameState === 'playing' && players[turn]?.isBot) {
+          const timer = setTimeout(() => {
+            const currentPlayer = players[turn];
+            const foundSets = findValidSetsFromHand(currentPlayer.hand);
+
+            if (foundSets.length > 0) {
+              let setsToPlay = [];
+              
+              if (!currentPlayer.hasIceBroken) {
+                let score = 0;
+                foundSets.forEach(set => {
+                  score += getSetValue(set);
+                });
+                if (score >= 30) {
+                  setsToPlay = foundSets;
+                }
+              } else {
+                setsToPlay = foundSets;
+              }
+
+              if (setsToPlay.length > 0) {
+                let newHand = [...currentPlayer.hand];
+                let newBoard = [...board];
+                
+                setsToPlay.forEach(set => {
+                  newBoard.push(set);
+                  set.forEach(tile => {
+                    newHand = newHand.filter(t => t.id !== tile.id);
+                  });
+                });
+
+                const newPlayers = [...players];
+                newPlayers[turn] = {
+                  ...currentPlayer,
+                  hand: newHand,
+                  hasIceBroken: true
+                };
+
+                setBoard(newBoard);
+                setPlayers(newPlayers);
+                showMessage(`${currentPlayer.name} 打出了 ${setsToPlay.length} 組牌！`);
+
+                if (newHand.length === 0) {
+                  setTimeout(() => {
+                    setMessage(`🎉 ${currentPlayer.name} 贏得了遊戲！ 🎉`);
+                    setGameState('gameover');
+                  }, 1500);
+                  return;
+                }
+
+                setTimeout(() => {
+                  passTurn((turn + 1) % players.length, newPlayers, newBoard);
+                }, 2500);
+                return;
+              }
+            }
+
+            drawTileAndPass('draw');
+          }, 1200);
+          return () => clearTimeout(timer);
+        }
+      }, [turn, gameState]);
+
+      if (gameState === 'setup') {
+        return (
+          <div className="min-h-screen bg-stone-100 flex flex-col items-center justify-center p-4">
+            <div className="bg-white p-8 rounded-xl shadow-lg max-w-sm w-full text-center">
+              <h1 className="text-3xl font-bold mb-2 text-gray-800">行動拉密完整版</h1>
+              <p className="text-sm text-gray-500 mb-6">包含百搭牌與破冰規則</p>
+              <p className="mb-4 text-gray-600">選擇電腦對手數量：</p>
+              <div className="flex justify-center gap-4 mb-8">
+                {[1, 2, 3].map(num => (
+                  <button
+                    key={num}
+                    onClick={() => setNumBots(num)}
+                    className={`w-12 h-12 rounded-full font-bold text-lg transition-colors ${
+                      numBots === num ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    {num}
+                  </button>
+                ))}
+              </div>
+              <button 
+                onClick={() => startGame(numBots)}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-colors"
+              >
+                開始遊戲
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      const humanPlayer = players[0];
+      const isMyTurn = turn === 0;
+
+      return (
+        <div className="min-h-screen bg-stone-200 flex flex-col max-w-3xl mx-auto shadow-2xl relative">
+          
+          {/* 頂部資訊列 */}
+          <div className="bg-slate-800 text-white p-3 flex justify-between items-center shadow-md z-10">
+            <div className="flex gap-3 overflow-x-auto">
+              {players.slice(1).map(p => (
+                <div key={p.id} className={`flex flex-col items-center p-1.5 rounded ${turn === p.id ? 'bg-slate-600 ring-2 ring-yellow-400' : ''}`}>
+                  <span className="text-xs sm:text-sm font-bold">{p.name}</span>
+                  <span className="text-xs text-gray-300">{p.hasIceBroken ? '已破冰' : '未破冰'}</span>
+                  <span className="text-xs bg-slate-700 px-2 py-0.5 rounded mt-1">{p.hand.length} 張</span>
+                </div>
+              ))}
+            </div>
+            <div className="text-right ml-4 shrink-0">
+              <div className="text-xs text-gray-300">牌堆</div>
+              <div className="font-bold">{deck.length}</div>
+            </div>
+          </div>
+
+          {/* 桌面區域 */}
+          <div className="flex-1 p-3 overflow-y-auto flex flex-col">
+            <div className="text-center mb-3">
+              <span className={`font-bold px-4 py-1 rounded-full text-sm ${isMyTurn ? 'bg-yellow-200 text-yellow-800' : 'bg-gray-300 text-gray-700'}`}>
+                {message}
+              </span>
+            </div>
+            
+            <div className="flex flex-wrap gap-x-4 gap-y-6 justify-center pb-4">
+              {board.length === 0 ? (
+                <div className="text-gray-400 mt-10 text-center text-sm">
+                  桌面目前沒有牌<br/>將你的牌點入暫存區，然後點擊「建立新牌組」
+                </div>
+              ) : (
+                board.map((set, idx) => {
+                  const isValid = isValidSet(set);
+                  return (
+                    <div key={idx} className="flex flex-col items-center relative">
+                      <div className={`flex gap-1 p-1.5 bg-white/70 rounded-lg shadow-sm border-2 ${isValid ? 'border-gray-300' : 'border-red-400 bg-red-50'}`}>
+                        {set.map(tile => (
+                          <Tile key={tile.id} tile={tile} onClick={() => handleBoardClick(idx, tile)} />
+                        ))}
+                      </div>
+                      {isMyTurn && staging.length > 0 && (
+                        <button 
+                          onClick={() => addToSet(idx)}
+                          className="absolute -bottom-5 bg-blue-500 text-white text-xs px-2 py-1 rounded shadow hover:bg-blue-600 z-10"
+                        >
+                          + 塞入此組
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* 玩家操作區：暫存區 (Staging) */}
+          {isMyTurn && (
+            <div className="bg-blue-50 border-t-2 border-blue-200 p-2 min-h-[5rem] flex flex-col justify-center shadow-inner relative">
+              <div className="absolute top-1 left-2 text-xs font-bold text-blue-400">工作暫存區</div>
+              <div className="flex flex-wrap gap-1 justify-center mt-3">
+                {staging.length === 0 ? (
+                  <span className="text-gray-400 text-sm">點擊手牌或桌面牌放到這裡</span>
+                ) : (
+                  staging.map(tile => (
+                    <div key={tile.id} className="relative">
+                      <Tile tile={tile} onClick={() => handleStagingClick(tile)} />
+                      {tile.source === 'hand' && (
+                        <span className="absolute -top-2 -right-2 bg-green-500 text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full">↓</span>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+              
+              {staging.length > 0 && (
+                <div className="flex justify-center mt-2">
+                  <button 
+                    onClick={formNewSet}
+                    className="bg-blue-600 text-white text-sm px-4 py-1.5 rounded-full shadow hover:bg-blue-700"
+                  >
+                    建立新牌組
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 玩家手牌區 */}
+          <div className="bg-slate-100 border-t-2 border-gray-300 p-2 sm:p-4 shadow-[0_-4px_10px_rgba(0,0,0,0.1)] z-20">
+            
+            {/* 控制面板 */}
+            <div className="flex justify-between items-center mb-2 gap-2">
+              <div className="flex flex-col gap-1">
+                 <div className="text-xs font-bold text-slate-500">
+                   我的狀態: {humanPlayer?.hasIceBroken ? <span className="text-green-600">已破冰自由出牌</span> : <span className="text-red-500">未破冰 (需30分)</span>}
+                 </div>
+                 <div className="flex gap-2">
+                  <button onClick={() => sortHand('number')} className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded active:scale-95">123排序</button>
+                  <button onClick={() => sortHand('color')} className="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded active:scale-95">顏色排序</button>
+                </div>
+              </div>
+              
+              {isMyTurn && gameState === 'playing' && (
+                <div className="flex gap-2">
+                   <button 
+                    onClick={resetTurn}
+                    className="px-3 py-2 bg-gray-400 hover:bg-gray-500 text-white font-bold text-xs rounded shadow active:scale-95"
+                  >
+                    重設回合
+                  </button>
+                  <button 
+                    onClick={endTurn}
+                    className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold text-sm rounded shadow active:scale-95"
+                  >
+                    確認出牌 / 抽牌
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 手牌展示 */}
+            <div className="flex flex-wrap gap-1 justify-center max-h-48 overflow-y-auto p-1">
+              {humanPlayer?.hand.map(tile => (
+                <Tile 
+                  key={tile.id} 
+                  tile={tile} 
+                  onClick={() => handleHandClick(tile)}
+                />
+              ))}
+            </div>
+            
+          </div>
+
+          {/* 遊戲結束遮罩 */}
+          {gameState === 'gameover' && (
+            <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-50">
+              <div className="bg-white p-8 rounded-xl text-center shadow-2xl">
+                <h2 className="text-3xl font-bold mb-4">{message}</h2>
+                <button 
+                  onClick={() => setGameState('setup')}
+                  className="bg-blue-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-blue-700"
+                >
+                  再玩一次
+                </button>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    // 將 React 元件渲染到畫面上
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
