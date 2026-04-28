@@ -14,6 +14,17 @@
   
   <!-- 載入 Babel 讓瀏覽器可以讀懂 JSX 語法 -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    /* 隱藏長牌組的橫向捲軸，讓畫面保持乾淨 */
+    .hide-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .hide-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+  </style>
 </head>
 <body class="bg-stone-200 overflow-hidden">
   <div id="root"></div>
@@ -248,7 +259,7 @@
       <div 
         onClick={onClick}
         className={`
-          relative flex items-center justify-center 
+          relative flex items-center justify-center shrink-0
           w-9 h-12 sm:w-11 sm:h-16 bg-white 
           rounded shadow-md border-2 cursor-pointer font-bold
           transform transition-transform active:scale-95
@@ -761,8 +772,8 @@
                 board.map((set, idx) => {
                   const isValid = isValidSet(set);
                   return (
-                    <div key={idx} className="flex flex-col items-center relative">
-                      <div className={`flex gap-1 p-1.5 bg-white/70 rounded-lg shadow-sm border-2 ${isValid ? 'border-gray-300' : 'border-red-400 bg-red-50'}`}>
+                    <div key={idx} className="flex flex-col items-center relative max-w-full px-2">
+                      <div className={`flex gap-1 p-1.5 bg-white/70 rounded-lg shadow-sm border-2 max-w-full overflow-x-auto hide-scrollbar ${isValid ? 'border-gray-300' : 'border-red-400 bg-red-50'}`}>
                         {set.map(tile => (
                           <Tile key={tile.id} tile={tile} onClick={() => handleBoardClick(idx, tile)} />
                         ))}
